@@ -6,6 +6,7 @@
 #include "mmu.h"
 #include "proc.h"
 #include "elf.h"
+#include "mman.h"
 
 extern char data[];  // defined by kernel.ld
 pde_t *kpgdir;  // for use in scheduler()
@@ -32,7 +33,7 @@ seginit(void)
 // Return the address of the PTE in page table pgdir
 // that corresponds to virtual address va.  If alloc!=0,
 // create any required page table pages.
-static pte_t *
+pte_t *
 walkpgdir(pde_t *pgdir, const void *va, int alloc)
 {
   pde_t *pde;
@@ -70,12 +71,14 @@ mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
       return -1;
     if(*pte & PTE_P)
       panic("remap");
+    // cprintf("Page Table Entry Value BEFORE 0x%x", *pte);
     *pte = pa | perm | PTE_P;
     if(a == last)
       break;
     a += PGSIZE;
     pa += PGSIZE;
   }
+  // cprintf("Page Table Entry Value AFTER 0x%x\n", *pte);
   return 0;
 }
 
@@ -229,27 +232,41 @@ allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
   if(newsz < oldsz)
     return oldsz;
 
-  return newsz;
-  // Use lazy page allocation and only allocate when the page is actually needed
+  a = PGROUNDUP(oldsz);
+  for(; a < newsz; a += PGSIZE){
+    mem = kalloc();
+    if(mem == 0){
+      cprintf("allocuvm out of memory\n");
+      deallocuvm(pgdir, newsz, oldsz);
+      return 0;
+    }
+    memset(mem, 0, PGSIZE);
+    if(mappages(pgdir, (char*)a, PGSIZE, V2P(mem), PTE_W|PTE_U) < 0){
+      cprintf("allocuvm out of memory (2)\n");
+      deallocuvm(pgdir, newsz, oldsz);
+      kfree(mem);
+      return 0;
+    }
+  }
 
-  // a = PGROUNDUP(oldsz);
-  // for(; a < newsz; a += PGSIZE){
-  //   mem = kalloc();
-  //   if(mem == 0){
-  //     cprintf("allocuvm out of memory\n");
-  //     deallocuvm(pgdir, newsz, oldsz);
-  //     return 0;
-  //   }
-  //   memset(mem, 0, PGSIZE);
-  //   if(mappages(pgdir, (char*)a, PGSIZE, V2P(mem), PTE_W|PTE_U) < 0){
-  //     cprintf("allocuvm out of memory (2)\n");
-  //     deallocuvm(pgdir, newsz, oldsz);
-  //     kfree(mem);
-  //     return 0;
-  //   }
-  // }
+  return newsz;
 }
 
+
+int
+allocuvm_mmap(pde_t *pgdir, uint oldsz, uint newsz)
+{
+  // char *mem;
+  // uint a;
+
+  if(newsz >= KERNBASE)
+    return 0;
+  if(newsz < oldsz)
+    return oldsz;
+
+  // Use lazy page allocation and only allocate when the page is actually needed
+  return newsz;
+}
 // Deallocate user pages to bring the process size from oldsz to
 // newsz.  oldsz and newsz need not be page-aligned, nor does newsz
 // need to be less than oldsz.  oldsz can be larger than the actual
@@ -398,6 +415,66 @@ copyout(pde_t *pgdir, uint va, void *p, uint len)
     va = va0 + PGSIZE;
   }
   return 0;
+}
+
+
+void
+pagefault_handler(struct trapframe *tf)
+{
+  struct proc* curproc = myproc();
+  uint fault_addr = rcr2();
+  char *mem;
+  uint a;
+
+  cprintf("============in pagefault_handler============\n");
+  cprintf("pid %d %s: trap %d err %d on cpu %d eip 0x%x addr 0x%x\n", curproc->pid, curproc->name, tf->trapno, tf->err, cpuid(), tf->eip, fault_addr);
+  
+  // Find the memory mapped region
+  struct mmap_region* mmap_pointer = curproc->mmap_regions;
+  int found = 0;
+
+  while(mmap_pointer != (struct mmap_region*) 0){
+    if (fault_addr >= mmap_pointer->start_addr && fault_addr < mmap_pointer->start_addr + mmap_pointer->length ) 
+    {
+      found = 1;
+      break;
+    }
+    // Go point to the next address
+    mmap_pointer = mmap_pointer->next_mmap_region;
+  }
+
+  if (!found) {
+    panic("Trying to access memory that should not even be mapped at this point\n");
+    return;
+  }
+
+  // If the fault address is within the range of my size of data I have claimed then I should map it.
+  a = PGROUNDDOWN(fault_addr); // should be rounded DOWN because this would be could be offsetted
+  mem = kalloc();
+  if(mem == 0){
+    cprintf("allocuvm out of memory\n");
+    deallocuvm(curproc->pgdir, a+PGSIZE, a);
+    return;
+  }
+  memset(mem, 0, PGSIZE);
+
+  uint write = PTE_W;
+  if ((mmap_pointer->prot & PROT_WRITE) != PROT_WRITE) write = 0;
+  if(mappages(curproc->pgdir, (char*)a, PGSIZE, V2P(mem), write|PTE_U|PTE_P) < 0){
+    cprintf("allocuvm out of memory (2)\n");
+    deallocuvm(curproc->pgdir, a, a+PGSIZE);
+    kfree(mem);
+    return;
+  } 
+
+  //If file read it's contents
+  if (mmap_pointer->file_d != 0){
+    // Take the starting address from the mapped region and subtract the fault addr
+    // This gives us the `offset` into the file it self, you want to read from this page down
+    //TODO: Check the seeking logic here
+    fileseek(mmap_pointer->file_d, PGROUNDDOWN(fault_addr - mmap_pointer->start_addr) + mmap_pointer->offset); // Do I need to account for the address space?
+    fileread(mmap_pointer->file_d, mem, PGSIZE);
+  }
 }
 
 //PAGEBREAK!

@@ -12,7 +12,7 @@ struct cpu {
 
 extern struct cpu cpus[NCPU];
 extern int ncpu;
-
+struct file;
 //PAGEBREAK: 17
 // Saved registers for kernel context switches.
 // Don't need to save all the segment registers (%cs, etc),
@@ -40,7 +40,7 @@ struct mmap_region {
   uint length;                 // Size of mmap
   int prot;                    // Memory protections
   int flags;                   // Region type (anonymous vs. file-backed)
-  int fd;                      // File-backed memory region
+  struct file* file_d;                      // File-backed memory region
   int offset;                  // Offset into file-backed memory region
 
   // Next mmap region

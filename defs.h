@@ -9,6 +9,7 @@ struct spinlock;
 struct sleeplock;
 struct stat;
 struct superblock;
+struct trapframe;
 
 // bio.c
 void            binit(void);
@@ -33,6 +34,7 @@ void            fileinit(void);
 int             fileread(struct file*, char*, int n);
 int             filestat(struct file*, struct stat*);
 int             filewrite(struct file*, char*, int n);
+int             fileseek(struct file*, uint offset);
 
 // fs.c
 void            readsb(int dev, struct superblock *sb);
@@ -126,6 +128,8 @@ void            wakeup(void*);
 void            yield(void);
 void*           mmap(void*, uint, int, int, int, int);
 int             munmap(void*, uint);
+int             msync(char *addr, int size);
+int             growproc_mmap(int);
 
 // swtch.S
 void            swtch(struct context**, struct context*);
@@ -182,6 +186,7 @@ void            kvmalloc(void);
 pde_t*          setupkvm(void);
 char*           uva2ka(pde_t*, char*);
 int             allocuvm(pde_t*, uint, uint);
+int             allocuvm_mmap(pde_t*, uint, uint);
 int             deallocuvm(pde_t*, uint, uint);
 void            freevm(pde_t*);
 void            inituvm(pde_t*, char*, uint);
@@ -192,6 +197,8 @@ void            switchkvm(void);
 int             copyout(pde_t*, uint, void*, uint);
 void            clearpteu(pde_t *pgdir, char *uva);
 int             hasptep(pde_t *pgdir, char *uva);
+void            pagefault_handler(struct trapframe *tf);
+pte_t *         walkpgdir(pde_t *pgdir, const void *va, int alloc);
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x)/sizeof((x)[0]))

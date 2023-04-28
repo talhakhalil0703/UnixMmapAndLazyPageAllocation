@@ -6,6 +6,7 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+#include "mman.h"
 
 struct {
   struct spinlock lock;
@@ -178,6 +179,25 @@ growproc(int n)
   return 0;
 }
 
+int
+growproc_mmap(int n)
+{
+  uint sz;
+  struct proc *curproc = myproc();
+
+  sz = curproc->sz;
+  if(n > 0){
+    if((sz = allocuvm_mmap(curproc->pgdir, sz, sz + n)) == 0)
+      return -1;
+  } else if(n < 0){
+    if((sz = deallocuvm(curproc->pgdir, sz, sz + n)) == 0)
+      return -1;
+  }
+  curproc->sz = sz;
+  switchuvm(curproc);
+  return 0;
+}
+
 // Create a new process copying p as the parent.
 // Sets up stack to return as if from system call.
 // Caller must set state of returned proc to RUNNABLE.
@@ -211,7 +231,7 @@ fork(void)
     new_mmap->length = mmap->length;
     new_mmap->prot = mmap->prot;
     new_mmap->flags = mmap->flags;
-    new_mmap->fd = mmap->fd;
+    new_mmap->file_d = mmap->file_d;
     new_mmap->offset = mmap->offset;
     new_mmap->next_mmap_region = (struct mmap_region*)0;
     if(prev_mmap != (struct mmap_region*)0){
@@ -539,6 +559,19 @@ mmap(void* addr, uint length, int prot, int flags, int fd, int offset)
   struct proc *curproc = myproc();
   uint curr_addr, start_addr, sz;
   uint i, found;
+  struct file * file_d = (struct  file *)0;
+
+  if (flags == MAP_ANONYMOUS && fd > -1){
+    return (void*) -1;
+  }
+
+  if (flags == MAP_FILE) {
+    if (fd < 0) {
+      return (void*) -1;
+    }
+
+    file_d = filedup(curproc->ofile[fd]); // Open the file and increment the reference count, is this right?
+  }
 
   curr_addr = PGROUNDDOWN((uint)addr);
   start_addr = curr_addr;
@@ -567,14 +600,15 @@ mmap(void* addr, uint length, int prot, int flags, int fd, int offset)
       (struct mmap_region*)0) {
         return (void*)0;
   }
-  if (found) {
-    if (allocuvm(curproc->pgdir, start_addr, sz) <= 0) {
+
+  if (found) { // Get memory that is already in our process memory
+    if (allocuvm_mmap(curproc->pgdir, start_addr, sz) <= 0) {
       kmfree(mmap);
       return (void*)0;
     }
-  } else {
+  } else { // Get memory from the process memory and expand it
     start_addr = curproc->sz;
-    if (growproc(PGROUNDUP(length)) != 0) {
+    if (growproc_mmap(PGROUNDUP(length)) != 0) {
       kmfree(mmap);
       return (void*)0;
     }
@@ -583,7 +617,7 @@ mmap(void* addr, uint length, int prot, int flags, int fd, int offset)
   mmap->length = length;
   mmap->prot = prot;
   mmap->flags = flags;
-  mmap->fd = fd;
+  mmap->file_d = file_d;
   mmap->offset = offset;
   mmap->next_mmap_region = curproc->mmap_regions;
   curproc->mmap_regions = mmap;
@@ -603,6 +637,9 @@ munmap(void *addr, uint length)
        prev_mmap = mmap, mmap = mmap->next_mmap_region) {
     if ((uint)addr == (uint)mmap->start_addr && length == mmap->length) {
       deallocuvm(curproc->pgdir, (uint)addr + PGROUNDUP(length), (uint)addr);
+      if (mmap->flags == MAP_FILE) {
+        fileclose(mmap->file_d); // Close the file
+      }
       if (prev_mmap != (struct mmap_region*)0) {
         prev_mmap->next_mmap_region = mmap->next_mmap_region;
       } else {
@@ -613,6 +650,53 @@ munmap(void *addr, uint length)
     }
   }
   return -1;
+}
+
+int msync(char *addr, int size){
+  // addr is always the starting address!
+  // size is the same as it was in mmap, same with the address
+
+  cprintf("CALLED MSYNC!\n");
+  struct proc* curproc = myproc();
+  
+  // Find the memory mapped region
+  struct mmap_region* mmap_pointer = curproc->mmap_regions;
+  int found = 0;
+
+  while(mmap_pointer != (struct mmap_region*) 0){
+    if ((uint)addr >= mmap_pointer->start_addr && (uint)addr < mmap_pointer->start_addr + mmap_pointer->length ) 
+    {
+      found = 1;
+      break;
+    }
+    // Go point to the next address
+    mmap_pointer = mmap_pointer->next_mmap_region;
+  }
+
+  if (!found){
+    return -1;
+  }
+
+  // What is your source?
+  // Your source is the data from the page, where is this page?
+  // You can find this page by walking the page directory and then
+
+  for(char* page_addr = addr; (uint)page_addr <= (uint)addr + size; page_addr += PGSIZE ){
+    pte_t* page = walkpgdir(curproc->pgdir, page_addr, 0);
+    if ((*page & PTE_P) == PTE_P) {
+      if ((*page & PTE_D) == PTE_D) {
+        // cprintf("Content Address: 0x%x\n", (char *)P2V(PTE_ADDR(*page)));
+        // cprintf("Starting Address: 0x%x\n", (char *)P2V(PTE_ADDR(mmap_pointer->start_addr)));
+        // cprintf("Difference: 0x%x\n", (char *)(P2V(PTE_ADDR(*page)) - P2V(PTE_ADDR(mmap_pointer->start_addr))));
+        // cprintf("Page Adress: 0x%x\n", page_addr);
+        // cprintf("Content: %s\n", (char *)P2V(PTE_ADDR(*page)));
+
+        fileseek(mmap_pointer->file_d,  (uint)page_addr - mmap_pointer->start_addr + mmap_pointer->offset);
+        filewrite(mmap_pointer->file_d, (char *)P2V(PTE_ADDR(*page)), size);
+      }
+    }
+  }
+  return 0;
 }
 
 static void
@@ -626,7 +710,7 @@ free_mmap_regions(struct mmap_region *mmap_regions)
     mmap->length = 0;
     mmap->prot = 0;
     mmap->flags = 0;
-    mmap->fd = 0;
+    mmap->file_d = 0;
     mmap->offset = 0;
   }
   while(mmap_regions != (struct mmap_region*)0){

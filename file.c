@@ -49,6 +49,7 @@ filedup(struct file *f)
     panic("filedup");
   f->ref++;
   release(&ftable.lock);
+  // cprintf("File Ref incremented\n");
   return f;
 }
 
@@ -153,5 +154,14 @@ filewrite(struct file *f, char *addr, int n)
     return i == n ? n : -1;
   }
   panic("filewrite");
+}
+
+int
+fileseek(struct file* f, uint offset)
+{
+  ilock(f->ip);
+  f->off = offset;
+  iunlock(f->ip);
+  return 0;
 }
 

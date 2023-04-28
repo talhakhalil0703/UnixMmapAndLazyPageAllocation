@@ -107,12 +107,15 @@ sys_mmap(void)
   if (argint(3, &flags) < 0) {
     return 0;
   }
-  if ((void*)addr != (void*)0 && argint(4, &fd) < 0) {
-    return 0;
+  if(argint(4, &fd) < 0){
+    if ((void*)addr != (void*)0) {
+      return 0;
+    }
   }
   if (argint(5, &offset) < 0) {
     return 0;
   }
+  cprintf("INFO: SYS mapping\n");
   return (int)mmap((void*)addr, (uint)len, prot, flags, fd, offset);
 }
 
@@ -128,4 +131,19 @@ sys_munmap(void)
     return -1;
   }
   return munmap((void*)addr, (uint)len);
+}
+
+int
+sys_msync(void)
+{
+  int addr, len;
+
+  if (argint(0, &addr) < 0) {
+    return -1;
+  }
+  if (argint(1, &len) < 0) {
+    return -1;
+  }
+
+ return msync((char*)addr, len);
 }
