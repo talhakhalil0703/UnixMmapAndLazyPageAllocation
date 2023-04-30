@@ -7,6 +7,7 @@
 char*
 strcpy(char *s, const char *t)
 {
+  printf(0, "Called strcpy\n");
   char *os;
 
   os = s;
@@ -26,6 +27,7 @@ strcmp(const char *p, const char *q)
 uint
 strlen(const char *s)
 {
+  printf(0, "Called strlen\n");
   int n;
 
   for(n = 0; s[n]; n++)

@@ -165,3 +165,11 @@ fileseek(struct file* f, uint offset)
   return 0;
 }
 
+uint
+filegetoff(struct file* f){
+  uint off = 0;
+  ilock(f->ip);
+  off = f->off;
+  iunlock(f->ip);
+  return off;
+}

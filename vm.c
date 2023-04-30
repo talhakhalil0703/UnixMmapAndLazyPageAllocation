@@ -458,8 +458,8 @@ pagefault_handler(struct trapframe *tf)
   }
   memset(mem, 0, PGSIZE);
 
-  uint write = PTE_W;
-  if ((mmap_pointer->prot & PROT_WRITE) != PROT_WRITE) write = 0;
+  uint write = 0;
+  if ((mmap_pointer->prot & PROT_WRITE) == PROT_WRITE) write = PTE_W;
   if(mappages(curproc->pgdir, (char*)a, PGSIZE, V2P(mem), write|PTE_U|PTE_P) < 0){
     cprintf("allocuvm out of memory (2)\n");
     deallocuvm(curproc->pgdir, a, a+PGSIZE);
@@ -471,9 +471,11 @@ pagefault_handler(struct trapframe *tf)
   if (mmap_pointer->file_d != 0){
     // Take the starting address from the mapped region and subtract the fault addr
     // This gives us the `offset` into the file it self, you want to read from this page down
-    //TODO: Check the seeking logic here
+    // Save the files previous offset
+    uint prev_off = filegetoff(mmap_pointer->file_d);
     fileseek(mmap_pointer->file_d, PGROUNDDOWN(fault_addr - mmap_pointer->start_addr) + mmap_pointer->offset); // Do I need to account for the address space?
     fileread(mmap_pointer->file_d, mem, PGSIZE);
+    fileseek(mmap_pointer->file_d, prev_off);
   }
 }
 

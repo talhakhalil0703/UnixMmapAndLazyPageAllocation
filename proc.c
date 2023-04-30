@@ -681,6 +681,8 @@ int msync(char *addr, int size){
   // Your source is the data from the page, where is this page?
   // You can find this page by walking the page directory and then
 
+  int data_size_to_write = size;
+  if (size > PGSIZE) data_size_to_write = PGSIZE;
   for(char* page_addr = addr; (uint)page_addr <= (uint)addr + size; page_addr += PGSIZE ){
     pte_t* page = walkpgdir(curproc->pgdir, page_addr, 0);
     if ((*page & PTE_P) == PTE_P) {
@@ -690,9 +692,19 @@ int msync(char *addr, int size){
         // cprintf("Difference: 0x%x\n", (char *)(P2V(PTE_ADDR(*page)) - P2V(PTE_ADDR(mmap_pointer->start_addr))));
         // cprintf("Page Adress: 0x%x\n", page_addr);
         // cprintf("Content: %s\n", (char *)P2V(PTE_ADDR(*page)));
+        uint prev_off = filegetoff(mmap_pointer->file_d);
 
         fileseek(mmap_pointer->file_d,  (uint)page_addr - mmap_pointer->start_addr + mmap_pointer->offset);
-        filewrite(mmap_pointer->file_d, (char *)P2V(PTE_ADDR(*page)), size);
+        // is this the last page?
+        if (page_addr + PGSIZE > addr+size){
+          // Get remainder of data to write
+          // If the original size was greater that PGSIZE
+          if (size > PGSIZE) {
+            data_size_to_write = size >> 4;
+          }
+        } 
+        filewrite(mmap_pointer->file_d, (char *)P2V(PTE_ADDR(*page)), data_size_to_write);
+        fileseek(mmap_pointer->file_d,  prev_off);
       }
     }
   }

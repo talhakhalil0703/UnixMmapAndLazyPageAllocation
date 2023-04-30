@@ -80,7 +80,7 @@ trap(struct trapframe *tf)
 
   //PAGEBREAK: 13
   default:
-    if (tf->trapno == T_PGFLT && tf->err != 7) { // Might need to add 6 and 4 here as well
+    if (tf->trapno == T_PGFLT && (tf->err == 6 || tf->err == 4)) { // Might need to add 6 and 4 here as well
       pagefault_handler(tf);
     } else {
       if(myproc() == 0 || (tf->cs&3) == 0){
